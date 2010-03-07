@@ -26,10 +26,12 @@
         defaults (into {} (for [[_ {:keys [default sym]}] key-data
                                 :when default]
                             [sym default]))]
-    (loop [[argkey & [argval :as r]] args
+    (loop [[arg & [argval :as r]] args
            cmdmap (assoc defaults :cmdspec cmdspec rest-str [])]
-      (if argkey
-        (let [[_ & [keybase]] (re-find #"^--?(.*)" argkey)]
+      (if arg
+        (let [[_ & [keybase _ eqval]] (re-find #"^--?([^=]*)(=(.*))?" arg)
+              r (if eqval (conj r eqval) r)
+              argkey (if eqval (second (re-find #"(^[^=]*)=.*" arg)) arg)]
           (cond
             (= keybase nil) (recur r (update-in cmdmap [rest-str] conj argkey))
             (= keybase "")  (update-in cmdmap [rest-str] #(apply conj % r))
