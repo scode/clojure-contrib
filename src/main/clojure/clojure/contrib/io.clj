@@ -14,7 +14,7 @@
 
 ;; This file defines "duck-typed" I/O utility functions for Clojure.
 ;; The 'reader' and 'writer' functions will open and return an
-;; instance of java.io.BufferedReader and java.io.PrintWriter,
+;; instance of java.io.BufferedReader and java.io.BufferedWriter,
 ;; respectively, for a variety of argument types -- filenames as
 ;; strings, URLs, java.io.File's, etc.  'reader' even works on http
 ;; URLs.
@@ -47,23 +47,22 @@
 
 (ns 
   #^{:author "Stuart Sierra",
-     :doc "This file defines \"duck-typed\" I/O utility functions for Clojure.
-           The 'reader' and 'writer' functions will open and return an
-           instance of java.io.BufferedReader and java.io.PrintWriter,
-           respectively, for a variety of argument types -- filenames as
-           strings, URLs, java.io.File's, etc.  'reader' even works on http
-           URLs.
+     :doc "This file defines polymorphic I/O utility functions for Clojure.
 
-           Note: this is not really \"duck typing\" as implemented in languages
-           like Ruby.  A better name would have been \"do-what-I-mean-streams\"
-           or \"just-give-me-a-stream\", but ducks are funnier."} 
+           The Streams protocol defines reader, writer, input-stream and
+           output-stream methods that return BufferedReader, BufferedWriter,
+           BufferedInputStream and BufferedOutputStream instances (respectively),
+           with default implementations extended to a variety of argument
+           types: URLs or filenames as strings, java.io.File's, Sockets, etc."}
     clojure.contrib.io
     (:import 
      (java.io Reader InputStream InputStreamReader PushbackReader
-              BufferedReader File PrintWriter OutputStream
+              BufferedReader File OutputStream
               OutputStreamWriter BufferedWriter Writer
               FileInputStream FileOutputStream ByteArrayOutputStream
-              StringReader ByteArrayInputStream)
+              StringReader ByteArrayInputStream
+              BufferedInputStream BufferedOutputStream
+              CharArrayReader)
      (java.net URI URL MalformedURLException Socket)))
 
 
@@ -82,6 +81,10 @@
  #^{:doc "Type object for a Java primitive byte array."}
  *byte-array-type* (class (make-array Byte/TYPE 0)))
 
+(def
+ #^{:doc "Type object for a Java primitive char array."}
+ *char-array-type* (class (make-array Character/TYPE 0)))
+
 
 (defn #^File file-str
   "Concatenates args as strings and returns a java.io.File.  Replaces
@@ -97,139 +100,202 @@
             s)]
     (File. s)))
 
-
-(defmulti #^{:tag BufferedReader
-             :doc "Attempts to coerce its argument into an open
-  java.io.BufferedReader.  Argument may be an instance of Reader,
-  BufferedReader, InputStream, File, URI, URL, Socket, or String.
-
-  If argument is a String, it tries to resolve it first as a URI, then
-  as a local file name.  URIs with a 'file' protocol are converted to
-  local file names.  Uses *default-encoding* as the text encoding.
-
-  Should be used inside with-open to ensure the Reader is properly
-  closed."
-             :arglists '([x])}
-  reader class)
-
-(defmethod reader Reader [x]
-  (BufferedReader. x))
-
-(defmethod reader InputStream [#^InputStream x]
-  (BufferedReader. (InputStreamReader. x *default-encoding*)))
-
-(defmethod reader File [#^File x]
-  (reader (FileInputStream. x)))
-
-(defmethod reader URL [#^URL x]
-  (reader (if (= "file" (.getProtocol x))
-            (FileInputStream. (.getPath x))
-            (.openStream x))))
-
-(defmethod reader URI [#^URI x]
-  (reader (.toURL x)))
-
-(defmethod reader String [#^String x]
-  (try (let [url (URL. x)]
-         (reader url))
-       (catch MalformedURLException e
-         (reader (File. x)))))
-
-(defmethod reader Socket [#^Socket x]
-  (reader (.getInputStream x)))
-
-(defmethod reader :default [x]
-  (throw (Exception. (str "Cannot open " (pr-str x) " as a reader."))))
-
-
 (def
- #^{:doc "If true, writer and spit will open files in append mode.
- Defaults to false.  Use append-writer or append-spit."
+ #^{:doc "If true, writer, output-stream and spit will open files in append mode.
+          Defaults to false.  Instead of binding this var directly, use append-writer,
+          append-output-stream or append-spit."
     :tag "java.lang.Boolean"}
- *append-to-writer* false)
-
-
-(defmulti #^{:tag PrintWriter
-             :doc "Attempts to coerce its argument into an open java.io.PrintWriter
-  wrapped around a java.io.BufferedWriter.  Argument may be an
-  instance of Writer, PrintWriter, BufferedWriter, OutputStream, File,
-  URI, URL, Socket, or String.
-
-  If argument is a String, it tries to resolve it first as a URI, then
-  as a local file name.  URIs with a 'file' protocol are converted to
-  local file names.
-
-  Should be used inside with-open to ensure the Writer is properly
-  closed."
-             :arglists '([x])}
-  writer class)
+ *append* false)
 
 (defn- assert-not-appending []
-  (when *append-to-writer*
+  (when *append*
     (throw (Exception. "Cannot change an open stream to append mode."))))
 
-(defmethod writer PrintWriter [x]
+;; @todo -- Both simple and elaborate methods for controlling buffering of
+;; in the Streams protocol were implemented, considered, and postponed
+;; see http://groups.google.com/group/clojure-dev/browse_frm/thread/3e39e9b3982f542b
+(defprotocol Streams
+  (reader [x]
+    "Attempts to coerce its argument into an open java.io.Reader.
+     The default implementations of this protocol always return a
+     java.io.BufferedReader.
+
+     Default implementations are provided for Reader, BufferedReader,
+     InputStream, File, URI, URL, Socket, byte arrays, character arrays,
+     and String.
+
+     If argument is a String, it tries to resolve it first as a URI, then
+     as a local file name.  URIs with a 'file' protocol are converted to
+     local file names.  If this fails, a final attempt is made to resolve
+     the string as a resource on the CLASSPATH.
+
+     Uses *default-encoding* as the text encoding.
+
+     Should be used inside with-open to ensure the Reader is properly
+     closed.")
+  (writer [x]
+    "Attempts to coerce its argument into an open java.io.Writer.
+     The default implementations of this protocol always return a
+     java.io.BufferedWriter.
+
+     Default implementations are provided for Writer, BufferedWriter,
+     OutputStream, File, URI, URL, Socket, and String.
+
+     If the argument is a String, it tries to resolve it first as a URI, then
+     as a local file name.  URIs with a 'file' protocol are converted to
+     local file names.
+
+     Should be used inside with-open to ensure the Writer is properly
+     closed.")
+  (input-stream [x]
+    "Attempts to coerce its argument into an open java.io.InputStream.
+     The default implementations of this protocol always return a
+     java.io.BufferedInputStream.
+
+     Default implementations are defined for OutputStream, File, URI, URL,
+     Socket, byte array, and String arguments.
+
+     If the argument is a String, it tries to resolve it first as a URI, then
+     as a local file name.  URIs with a 'file' protocol are converted to
+     local file names.
+
+     Should be used inside with-open to ensure the InputStream is properly
+     closed.")
+  (output-stream [x]
+    "Attempts to coerce its argument into an open java.io.OutputStream.
+     The default implementations of this protocol always return a
+     java.io.BufferedOutputStream.
+
+     Default implementations are defined for OutputStream, File, URI, URL,
+     Socket, and String arguments.
+
+     If the argument is a String, it tries to resolve it first as a URI, then
+     as a local file name.  URIs with a 'file' protocol are converted to
+     local file names.
+
+     Should be used inside with-open to ensure the OutputStream is
+     properly closed."))
+
+(def default-streams-impl
+  {:reader #(reader (input-stream %))
+   :writer #(writer (output-stream %))
+   :input-stream #(throw (Exception. (str "Cannot open <" (pr-str %) "> as an InputStream.")))
+   :output-stream #(throw (Exception. (str "Cannot open <" (pr-str %) "> as an OutputStream.")))})
+
+(extend File
+  Streams
+  (assoc default-streams-impl
+    :input-stream #(input-stream (FileInputStream. #^File %))
+    :output-stream #(let [stream (FileOutputStream. #^File % *append*)]
+                      (binding [*append* false]
+                        (output-stream stream)))))
+(extend URL
+  Streams
+  (assoc default-streams-impl
+    :input-stream (fn [#^URL x]
+                    (input-stream (if (= "file" (.getProtocol x))
+                                    (FileInputStream. (.getPath x))
+                                    (.openStream x))))
+    :output-stream (fn [#^URL x]
+                     (if (= "file" (.getProtocol x))
+                       (output-stream (File. (.getPath x)))
+                       (throw (Exception. (str "Can not write to non-file URL <" x ">")))))))
+(extend URI
+  Streams
+  (assoc default-streams-impl
+    :input-stream #(input-stream (.toURL #^URI %))
+    :output-stream #(output-stream (.toURL #^URI %))))
+(extend String
+  Streams
+  (assoc default-streams-impl
+    :input-stream #(try
+                     (input-stream (URL. %))
+                     (catch MalformedURLException e
+                       (input-stream (File. #^String %))))
+    :output-stream #(try
+                      (output-stream (URL. %))
+                      (catch MalformedURLException err
+                        (output-stream (File. #^String %))))))
+(extend Socket
+  Streams
+  (assoc default-streams-impl
+    :input-stream #(.getInputStream #^Socket %)
+    :output-stream #(output-stream (.getOutputStream #^Socket %))))
+(extend *byte-array-type*
+  Streams
+  (assoc default-streams-impl :input-stream #(input-stream (ByteArrayInputStream. %))))
+(extend *char-array-type*
+  Streams
+  (assoc default-streams-impl :reader #(reader (CharArrayReader. %))))
+(extend Object
+  Streams
+  default-streams-impl)
+
+(extend Reader
+  Streams
+  (assoc default-streams-impl :reader #(BufferedReader. %)))
+(extend BufferedReader
+  Streams
+  (assoc default-streams-impl :reader identity))
+(defn- inputstream->reader
+  [#^InputStream is]
+  (reader (InputStreamReader. is *default-encoding*)))
+(extend InputStream
+  Streams
+  (assoc default-streams-impl :input-stream #(BufferedInputStream. %)
+    :reader inputstream->reader))
+(extend BufferedInputStream
+  Streams
+  (assoc default-streams-impl
+    :input-stream identity
+    :reader inputstream->reader))
+
+(extend Writer
+  Streams
+  (assoc default-streams-impl :writer #(do (assert-not-appending)
+                                           (BufferedWriter. %))))
+(extend BufferedWriter
+  Streams
+  (assoc default-streams-impl :writer #(do (assert-not-appending) %)))
+(defn- outputstream->writer
+  [#^OutputStream os]
   (assert-not-appending)
-  x)
+  (writer (OutputStreamWriter. os *default-encoding*)))
+(extend OutputStream
+  Streams
+  (assoc default-streams-impl
+    :output-stream #(do (assert-not-appending)
+                        (BufferedOutputStream. %))
+    :writer outputstream->writer))
+(extend BufferedOutputStream
+  Streams
+  (assoc default-streams-impl
+    :output-stream #(do (assert-not-appending) %)
+      :writer outputstream->writer))
 
-(defmethod writer BufferedWriter [#^BufferedWriter x]
-  (assert-not-appending)
-  (PrintWriter. x))
-
-(defmethod writer Writer [x]
-  (assert-not-appending)
-  ;; Writer includes sub-classes such as FileWriter
-  (PrintWriter. (BufferedWriter. x)))   
-
-(defmethod writer OutputStream [#^OutputStream x]
-  (assert-not-appending)
-  (PrintWriter.
-   (BufferedWriter.
-    (OutputStreamWriter. x *default-encoding*))))
-
-(defmethod writer File [#^File x]
-  (let [stream (FileOutputStream. x *append-to-writer*)]
-    (binding [*append-to-writer* false]
-      (writer stream))))
-
-(defmethod writer URL [#^URL x]
-  (if (= "file" (.getProtocol x))
-    (writer (File. (.getPath x)))
-    (throw (Exception. (str "Cannot write to non-file URL <" x ">")))))
-
-(defmethod writer URI [#^URI x]
-  (writer (.toURL x)))
-
-(defmethod writer String [#^String x]
-  (try (let [url (URL. x)]
-         (writer url))
-       (catch MalformedURLException err
-         (writer (File. x)))))
-
-(defmethod writer Socket [#^Socket x]
-  (writer (.getOutputStream x)))
-
-(defmethod writer :default [x]
-  (throw (Exception. (str "Cannot open <" (pr-str x) "> as a writer."))))
-
+(defn append-output-stream
+  "Like output-stream but opens file for appending.  Does not work on streams
+  that are already open."
+  [x]
+  (binding [*append* true]
+    (output-stream x)))
 
 (defn append-writer
   "Like writer but opens file for appending.  Does not work on streams
   that are already open."
   [x]
-  (binding [*append-to-writer* true]
+  (binding [*append* true]
     (writer x)))
-
 
 (defn write-lines
   "Writes lines (a seq) to f, separated by newlines.  f is opened with
   writer, and automatically closed at the end of the sequence."
   [f lines]
-  (with-open [#^PrintWriter writer (writer f)]
+  (with-open [#^BufferedWriter writer (writer f)]
     (loop [lines lines]
       (when-let [line (first lines)]
         (.write writer (str line))
-        (.println writer)
+        (.newLine writer)
         (recur (rest lines))))))
 
 (defn read-lines
@@ -258,14 +324,14 @@
   "Opposite of slurp.  Opens f with writer, writes content, then
   closes f."
   [f content]
-  (with-open [#^PrintWriter w (writer f)]
-      (.print w content)))
+  (with-open [#^Writer w (writer f)]
+    (.write w content)))
 
 (defn append-spit
   "Like spit but appends to file."
   [f content]
-  (with-open [#^PrintWriter w (append-writer f)]
-    (.print w content)))
+  (with-open [#^Writer w (append-writer f)]
+    (.write w content)))
 
 (defn pwd
   "Returns current working directory as a String.  (Like UNIX 'pwd'.)
@@ -373,6 +439,15 @@
 
 (defmethod copy [String File] [#^String input #^File output]
   (copy (StringReader. input) output))
+
+(defmethod copy [*char-array-type* OutputStream] [input #^OutputStream output]
+  (copy (CharArrayReader. input) output))
+
+(defmethod copy [*char-array-type* Writer] [input #^Writer output]
+  (copy (CharArrayReader. input) output))
+
+(defmethod copy [*char-array-type* File] [input #^File output]
+  (copy (CharArrayReader. input) output))
 
 (defmethod copy [*byte-array-type* OutputStream] [#^"[B" input #^OutputStream output]
   (copy (ByteArrayInputStream. input) output))

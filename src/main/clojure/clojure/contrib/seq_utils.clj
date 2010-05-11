@@ -24,7 +24,7 @@
 (ns 
   #^{:author "Stuart Sierra (and others)",
      :doc "Sequence utilities for Clojure"}
-  clojure.contrib.seq
+  clojure.contrib.seq-utils
   (:import (java.util.concurrent LinkedBlockingQueue TimeUnit)
            (java.lang.ref WeakReference))
   (:refer-clojure :exclude [frequencies shuffle partition-by reductions partition-all group-by flatten]))
@@ -164,6 +164,7 @@
   [s]
   (nth s (rand-int (count s))))
 
+
 ;; seq-on written by Konrad Hinsen
 (defmulti seq-on
   "Returns a seq on the object s. Works like the built-in seq but as
@@ -233,6 +234,7 @@
   {:deprecated "1.2"}
   [coll x]
   (boolean (some (fn [y] (= y x)) coll)))
+
 
 
 

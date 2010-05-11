@@ -194,10 +194,31 @@
   (cl-format nil "~1,1,6$" 0.001) "   0.0"
   (cl-format nil "~1,1,6$" 0.0015) "   0.0"
   (cl-format nil "~2,1,6$" 0.005) "  0.01"
-  (cl-format nil "~2,1,6$" 0.01) "  0.01")
+  (cl-format nil "~2,1,6$" 0.01) "  0.01"
+  (cl-format nil "~$" 0.099) "0.10"
+  (cl-format nil "~1$" 0.099) "0.1"
+  (cl-format nil "~1$" 0.1) "0.1"
+  (cl-format nil "~1$" 0.99) "1.0"
+  (cl-format nil "~1$" -0.99) "-1.0")
 
 (simple-tests f-tests
-  (cl-format nil "~,1f" -12.0) "-12.0")
+  (cl-format nil "~,1f" -12.0) "-12.0"
+  (cl-format nil "~,0f" 9.4) "9."
+  (cl-format nil "~,0f" 9.5) "10."
+  (cl-format nil "~,0f" -0.99) "-1."
+  (cl-format nil "~,1f" -0.99) "-1.0"
+  (cl-format nil "~,2f" -0.99) "-0.99"
+  (cl-format nil "~,3f" -0.99) "-0.990"
+  (cl-format nil "~,0f" 0.99) "1."
+  (cl-format nil "~,1f" 0.99) "1.0"
+  (cl-format nil "~,2f" 0.99) "0.99"
+  (cl-format nil "~,3f" 0.99) "0.990"
+  (cl-format nil "~f" -1) "-1.0"
+  (cl-format nil "~2f" -1) "-1."
+  (cl-format nil "~3f" -1) "-1."
+  (cl-format nil "~4f" -1) "-1.0"
+  (cl-format nil "~8f" -1) "    -1.0"
+  (cl-format nil "~1,1f" 0.1) ".1")
 
 (simple-tests ampersand-tests
   (cl-format nil "The quick brown ~a jumped over ~d lazy dogs" 'elephant 5)
@@ -445,14 +466,14 @@
 (cl-format true "~%;; ~{~<~%;; ~:; ~A~>~}.~%" (into [] (.split "This function computes the circular thermodynamic coefficient of the thrombulator angle for use in determining the reaction distance." "\\s"))))
 
 (defn list-to-table [aseq column-width]
-  (let [stream (pretty-writer (java.io.StringWriter.))]
+  (let [stream (get-pretty-writer (java.io.StringWriter.))]
     (binding [*out* stream]
      (doseq [row aseq]
        (doseq [col row]
          (cl-format true "~4D~7,vT" col column-width))
        (prn)))
     (.flush stream)
-    (.toString (.getWriter stream))))
+    (.toString (:base @@(:base @@stream)))))
 
 (simple-tests column-writer-test
   (list-to-table (map #(vector % (* % %) (* % % %)) (range 1 21)) 8)
